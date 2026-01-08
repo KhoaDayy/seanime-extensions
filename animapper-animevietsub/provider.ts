@@ -172,7 +172,7 @@ class Provider {
                         continue
                     }
                     
-                    const baseNumber = parseFloat(baseNumberMatch[1])
+                    const baseNumber = parseInt(baseNumberMatch[1], 10)
                     if (isNaN(baseNumber)) {
                         continue
                     }
@@ -180,15 +180,18 @@ class Provider {
                     const hasUnderscoreSuffix = episodeNumberStr.includes("_")
                     const hasDashRange = episodeNumberStr.includes("-") && episodeNumberStr.split("-").length > 1
                     
-                    const episodeNumber = Math.floor(baseNumber)
+                    const episodeNumber = baseNumber
                     
                     const title = (hasUnderscoreSuffix || hasDashRange)
                         ? `Episode ${episodeNumberStr}` 
                         : `Episode ${episodeNumber}`
                     
+                    // HAIZZZ
+                    const episodeNumberInt = parseInt(episodeNumber.toString(), 10)
+                    
                     const episodeDetail: EpisodeDetails & { episodeNumberStr?: string } = {
                         id: episode.episodeId,
-                        number: episodeNumber,
+                        number: episodeNumberInt,
                         url: "",
                         title: title,
                     }
@@ -262,6 +265,8 @@ class Provider {
             
             allEpisodes.forEach(ep => {
                 delete (ep as any).episodeNumberStr
+                // Final safeguard: ensure number is always an integer
+                ep.number = parseInt(ep.number.toString(), 10)
             })
 
             return allEpisodes
