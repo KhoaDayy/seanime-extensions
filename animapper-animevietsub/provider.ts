@@ -180,40 +180,20 @@ class Provider {
                     const hasUnderscoreSuffix = episodeNumberStr.includes("_")
                     const hasDashRange = episodeNumberStr.includes("-") && episodeNumberStr.split("-").length > 1
                     
-                    // For sorting: use base number + small offset for special formats
-                    // This ensures "195" < "195_1" < "195_2" < "195-196-197" < "195_end" < "196"
-                    let sortNumber = baseNumber
-                    
-                    if (hasUnderscoreSuffix) {
-                        const suffix = episodeNumberStr.substring(episodeNumberStr.indexOf("_"))
-                        // Extract numeric suffix if available (e.g., "_1" -> 0.001, "_2" -> 0.002)
-                        const suffixMatch = suffix.match(/_(\d+)/)
-                        if (suffixMatch) {
-                            // Use 10000 to allow up to 9999 duplicate episodes per base number
-                            sortNumber = baseNumber + (parseFloat(suffixMatch[1]) / 10000)
-                        } else if (suffix.toLowerCase() === "_end") {
-                            // "_end" comes after numeric suffixes and ranges
-                            sortNumber = baseNumber + 0.9999
-                        } else {
-                            // Other suffixes (e.g., "_special", "_final") get a medium offset
-                            sortNumber = baseNumber + 0.5
-                        }
-                    } else if (hasDashRange) {
-                        // Range episodes (e.g., "195-196-197") come after regular episodes but before "_end"
-                        // Use a small offset to place them after single episodes
-                        sortNumber = baseNumber + 0.8
-                    }
+                    const episodeNumber = Math.floor(baseNumber)
                     
                     const title = (hasUnderscoreSuffix || hasDashRange)
                         ? `Episode ${episodeNumberStr}` 
-                        : `Episode ${baseNumber}`
+                        : `Episode ${episodeNumber}`
                     
-                    allEpisodes.push({
+                    const episodeDetail: EpisodeDetails & { episodeNumberStr?: string } = {
                         id: episode.episodeId,
-                        number: sortNumber,
+                        number: episodeNumber,
                         url: "",
                         title: title,
-                    })
+                    }
+                    episodeDetail.episodeNumberStr = episodeNumberStr
+                    allEpisodes.push(episodeDetail)
                 }
 
                 if (!data.hasNextPage) {
@@ -227,7 +207,62 @@ class Provider {
                 throw new Error("No episodes found.")
             }
 
-            allEpisodes.sort((a, b) => a.number - b.number)
+            // Sort episodes by parsing the episode number string
+            // This handles formats like "195", "195_1", "195_2", "195-196-197", "195_end"
+            allEpisodes.sort((a, b) => {
+                const aStr = (a as any).episodeNumberStr || a.number.toString()
+                const bStr = (b as any).episodeNumberStr || b.number.toString()
+                
+                const aBaseMatch = aStr.match(/^(\d+)/)
+                const bBaseMatch = bStr.match(/^(\d+)/)
+                
+                if (!aBaseMatch || !bBaseMatch) {
+                    return aStr.localeCompare(bStr)
+                }
+                
+                const aBase = parseInt(aBaseMatch[1])
+                const bBase = parseInt(bBaseMatch[1])
+                
+                if (aBase !== bBase) {
+                    return aBase - bBase
+                }
+                
+                const aHasUnderscore = aStr.includes("_")
+                const aHasDash = aStr.includes("-")
+                const bHasUnderscore = bStr.includes("_")
+                const bHasDash = bStr.includes("-")
+                
+                if (!aHasUnderscore && !aHasDash) return -1
+                if (!bHasUnderscore && !bHasDash) return 1
+                
+                if (aHasUnderscore && !aHasDash) {
+                    const aSuffixMatch = aStr.match(/_(\d+)/)
+                    if (aSuffixMatch) {
+                        if (bHasDash) return -1
+                        if (bHasUnderscore && !bStr.match(/_(\d+)/)) return -1
+                        if (bHasUnderscore) {
+                            const bSuffixMatch = bStr.match(/_(\d+)/)
+                            if (bSuffixMatch) {
+                                return parseInt(aSuffixMatch[1]) - parseInt(bSuffixMatch[1])
+                            }
+                        }
+                    }
+                }
+                
+                if (aHasDash) {
+                    if (bHasUnderscore && !bStr.match(/_(\d+)/)) return -1
+                    if (bHasDash) return aStr.localeCompare(bStr)
+                }
+                
+                if (aStr.toLowerCase().endsWith("_end")) return 1
+                if (bStr.toLowerCase().endsWith("_end")) return -1
+                
+                return aStr.localeCompare(bStr)
+            })
+            
+            allEpisodes.forEach(ep => {
+                delete (ep as any).episodeNumberStr
+            })
 
             return allEpisodes
         } catch (error) {
