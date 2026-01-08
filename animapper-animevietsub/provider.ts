@@ -45,6 +45,7 @@ type AniMapperEpisodesResponse = {
     episodes: Array<{
         episodeNumber: string
         episodeId: string
+        server?: string
     }>
 }
 
@@ -58,6 +59,7 @@ type AniMapperSourceResponse = {
 
 class Provider {
     private apiBaseUrl: string
+    private cachedServers: string[] = ["DU", "HDX"] // Default fallback servers
 
     constructor() {
         this.apiBaseUrl = API_BASE_URL
@@ -65,8 +67,22 @@ class Provider {
 
     getSettings(): Settings {
         return {
-            episodeServers: ["DU", "HDX"],
+            episodeServers: this.cachedServers,
             supportsDub: false,
+        }
+    }
+    
+    private updateServersFromEpisodes(episodes: AniMapperEpisodesResponse["episodes"]): void {
+        const servers = new Set<string>()
+        
+        for (const episode of episodes) {
+            if (episode.server) {
+                servers.add(episode.server)
+            }
+        }
+        
+        if (servers.size > 0) {
+            this.cachedServers = Array.from(servers).sort()
         }
     }
 
@@ -163,6 +179,8 @@ class Provider {
                 if (!data.episodes || data.episodes.length === 0) {
                     break
                 }
+                
+                this.updateServersFromEpisodes(data.episodes)
 
                 for (const episode of data.episodes) {
                     const episodeNumberStr = episode.episodeNumber.trim()
@@ -189,13 +207,17 @@ class Provider {
                     // Ensure number is always an integer - use bitwise OR to force integer conversion
                     const episodeNumberInt = (parseInt(baseNumber.toString(), 10)) | 0
                     
-                    const episodeDetail: EpisodeDetails & { episodeNumberStr?: string } = {
+                    const episodeDetail: EpisodeDetails & { episodeNumberStr?: string; server?: string } = {
                         id: episode.episodeId,
                         number: episodeNumberInt,
                         url: "",
                         title: title,
                     }
                     episodeDetail.episodeNumberStr = episodeNumberStr
+                    // Store server information if available from API
+                    if (episode.server) {
+                        episodeDetail.server = episode.server
+                    }
                     allEpisodes.push(episodeDetail)
                 }
 
@@ -260,6 +282,14 @@ class Provider {
                 if (aStr.toLowerCase().endsWith("_end")) return 1
                 if (bStr.toLowerCase().endsWith("_end")) return -1
                 
+                if (aBase === bBase) {
+                    const aServer = (a as any).server || ""
+                    const bServer = (b as any).server || ""
+                    if (aServer !== bServer) {
+                        return aServer.localeCompare(bServer)
+                    }
+                }
+                
                 return aStr.localeCompare(bStr)
             })
             
@@ -277,7 +307,8 @@ class Provider {
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
         try {
-            const serverName = server && server !== "default" ? server : "DU"
+            const episodeServer = (episode as any).server
+            let serverName = server && server !== "default" ? server : (episodeServer || "DU")
             
             const episodeData = episode.id
 
