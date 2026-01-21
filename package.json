@@ -1,0 +1,26 @@
+{
+    "name": "animapper-provider",
+    "version": "1.0.0",
+    "description": "AniMapper Online Streaming Provider for Seanime",
+    "main": "index.js",
+    "scripts": {
+        "test": "echo \"No tests specified\""
+    },
+    "keywords": [
+        "seanime",
+        "extension",
+        "animapper",
+        "streaming",
+        "anime",
+        "vietnamese"
+    ],
+    "author": "Your Name",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/yourusername/seanime-animapper-extension"
+    },
+    "bugs": {
+        "url": "https://github.com/yourusername/seanime-animapper-extension/issues"
+    }
+}

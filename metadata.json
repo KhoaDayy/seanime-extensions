@@ -1,0 +1,14 @@
+{
+    "id": "animapper-animevietsub",
+    "name": "AniMapper AnimeVietSub",
+    "version": "1.0.1",
+    "manifestVersion": "1.0.0",
+    "author": "Based on SinonCute's implementation",
+    "description": "Online streaming provider cho Seanime sử dụng AniMapper API - ANIMEVIETSUB provider với phụ đề tiếng Việt",
+    "icon": "https://animapper.net/img/logo.png",
+    "lang": [
+        "vi",
+        "en"
+    ],
+    "type": "onlinestream-provider"
+}
