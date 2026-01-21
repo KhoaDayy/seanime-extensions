@@ -155,9 +155,13 @@ class Provider {
 
                 if (!res.ok) {
                     if (res.status === 404) {
-                        const errorData = await res.json().catch(() => ({}))
-                        if (errorData.code === "MAPPING_NOT_FOUND" || errorData.code === "EPISODES_NOT_FOUND") {
-                            throw new Error(`No episodes found for media ID: ${mediaId}`)
+                        try {
+                            const errorData = await res.json() as any
+                            if (errorData.code === "MAPPING_NOT_FOUND" || errorData.code === "EPISODES_NOT_FOUND") {
+                                throw new Error(`No episodes found for media ID: ${mediaId}`)
+                            }
+                        } catch (e) {
+                            // Ignore json parse error
                         }
                     }
                     throw new Error(`Failed to fetch episodes: ${res.status} ${res.statusText}`)
