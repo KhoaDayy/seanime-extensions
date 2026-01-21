@@ -146,42 +146,18 @@ class Provider {
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        console.log(`DEBUG: v1.0.4 findEpisodes called for ID: ${id}`);
-        try {
-            const mediaId = parseInt(id)
-            if (isNaN(mediaId)) {
-                throw new Error(`Invalid media ID: ${id}`)
-            }
+        console.log(`DEBUG: v1.0.9 findEpisodes called for ID: ${id}`);
 
-            // 1. Metadata check for debugging
-            try {
-                const metaUrl = `${this.apiBaseUrl}/api/v1/metadata?id=${mediaId}`;
-                const metaRes = await fetch(metaUrl, {
-                    headers: { "User-Agent": "Mozilla/5.0 Seanime" }
-                });
-                if (metaRes.ok) {
-                    const metaData = await metaRes.json() as any;
-                    // Check if provider exists in metadata
-                    if (metaData?.result?.providers?.[PROVIDER_NAME]) {
-                        console.log(`DEBUG: Metadata confirms ${PROVIDER_NAME} exists for ID ${mediaId}`);
-                    } else {
-                        console.warn(`DEBUG: Metadata implies ${PROVIDER_NAME} MISSING for ID ${mediaId}`);
-                    }
-                }
-            } catch (e) {
-                console.error("DEBUG: Failed to check metadata", e);
-            }
-
+        // Helper to fetch episodes by ID
+        const fetchEpisodesById = async (targetId: string | number): Promise<EpisodeDetails[]> => {
+            console.log(`DEBUG: Attempting to fetch episodes for ID: ${targetId}`);
             let offset = 0
             const limit = 20
             const allEpisodes: EpisodeDetails[] = []
             let hasNextPage = true;
 
-            // Pagination loop
             while (hasNextPage) {
-                const episodesUrl = `${this.apiBaseUrl}/api/v1/stream/episodes?id=${mediaId}&provider=${PROVIDER_NAME}&limit=${limit}&offset=${offset}`
-                console.log(`DEBUG: Fetching URL: ${episodesUrl}`);
-
+                const episodesUrl = `${this.apiBaseUrl}/api/v1/stream/episodes?id=${targetId}&provider=${PROVIDER_NAME}&limit=${limit}&offset=${offset}`
                 const res = await fetch(episodesUrl, {
                     headers: {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -189,18 +165,9 @@ class Provider {
                 })
 
                 if (!res.ok) {
-                    console.error(`DEBUG: HTTP Error ${res.status} for ${episodesUrl}`);
-
                     if (res.status === 404) {
-                        let errorData: any = {};
-                        try {
-                            errorData = await res.json();
-                            console.error("DEBUG: 404 Response:", JSON.stringify(errorData));
-                        } catch (e) { }
-
-                        if (errorData && (errorData.code === "MAPPING_NOT_FOUND" || errorData.code === "EPISODES_NOT_FOUND")) {
-                            throw new Error(`No episodes found for media ID: ${mediaId}`);
-                        }
+                        console.warn(`DEBUG: 404 for ID ${targetId}`);
+                        return [];
                     }
                     throw new Error(`Failed to fetch episodes: ${res.status} ${res.statusText}`);
                 }
@@ -208,52 +175,30 @@ class Provider {
                 const data = await res.json() as AniMapperEpisodesResponse
 
                 if (!data.episodes || data.episodes.length === 0) {
-                    console.log("DEBUG: No episodes returned in current page. Stopping loop.");
                     break;
                 }
 
-                console.log(`DEBUG: Received ${data.episodes.length} episodes on offset ${offset}`);
-
-                // Process episodes
                 for (const episode of data.episodes) {
                     const episodeNumberStr = episode.episodeNumber.trim()
-
-                    // Parse base episode number
                     const baseNumberMatch = episodeNumberStr.match(/^(\d+)/)
-                    if (!baseNumberMatch) {
-                        continue
-                    }
+                    if (!baseNumberMatch) continue;
 
                     const baseNumber = parseInt(baseNumberMatch[1], 10)
-                    if (isNaN(baseNumber)) {
-                        continue
-                    }
+                    if (isNaN(baseNumber)) continue;
 
-                    // Check for special formats
-                    const hasUnderscoreSuffix = episodeNumberStr.includes("_")
-                    const hasDashRange = episodeNumberStr.includes("-") && episodeNumberStr.split("-").length > 1
-
-                    const episodeNumber = baseNumber
-
-                    // Create title
-                    const title = (hasUnderscoreSuffix || hasDashRange)
+                    const title = (episodeNumberStr.includes("_") || (episodeNumberStr.includes("-") && episodeNumberStr.split("-").length > 1))
                         ? `Episode ${episodeNumberStr}`
-                        : `Episode ${episodeNumber}`
+                        : `Episode ${baseNumber}`
 
-                    // Force integer conversion
-                    const episodeNumberInt = (parseInt(baseNumber.toString(), 10)) | 0
-
-                    const episodeDetail: EpisodeDetails & { episodeNumberStr?: string; server?: string; mediaId?: number } = {
+                    const episodeDetail: EpisodeDetails & { episodeNumberStr?: string; server?: string; mediaId?: string | number } = {
                         id: episode.episodeId,
-                        number: episodeNumberInt,
+                        number: baseNumber,
                         url: "",
                         title: title,
                     }
                     episodeDetail.episodeNumberStr = episodeNumberStr
-                    episodeDetail.mediaId = mediaId
-                    if (episode.server) {
-                        episodeDetail.server = episode.server
-                    }
+                    episodeDetail.mediaId = targetId
+                    if (episode.server) episodeDetail.server = episode.server
                     allEpisodes.push(episodeDetail)
                 }
 
@@ -263,97 +208,115 @@ class Provider {
                     offset += limit
                 }
             }
-
-            if (allEpisodes.length === 0) {
-                console.error("DEBUG: allEpisodes list is empty.");
-                throw new Error("No episodes found.")
-            }
-
-            // Deduplication
-            const seenEpisodes = new Map<string, EpisodeDetails & { episodeNumberStr?: string; server?: string; mediaId?: number }>()
-
-            for (const episode of allEpisodes) {
-                const episodeNumberStr = (episode as any).episodeNumberStr || episode.number.toString()
-
-                if (!seenEpisodes.has(episodeNumberStr)) {
-                    seenEpisodes.set(episodeNumberStr, episode)
-                }
-            }
-
-            const deduplicatedEpisodes = Array.from(seenEpisodes.values())
-
-            // Smart sorting
-            deduplicatedEpisodes.sort((a, b) => {
-                const aStr = (a as any).episodeNumberStr || a.number.toString()
-                const bStr = (b as any).episodeNumberStr || b.number.toString()
-
-                const aBaseMatch = aStr.match(/^(\d+)/)
-                const bBaseMatch = bStr.match(/^(\d+)/)
-
-                if (!aBaseMatch || !bBaseMatch) {
-                    return aStr.localeCompare(bStr)
-                }
-
-                const aBase = parseInt(aBaseMatch[1])
-                const bBase = parseInt(bBaseMatch[1])
-
-                if (aBase !== bBase) {
-                    return aBase - bBase
-                }
-
-                const aHasUnderscore = aStr.includes("_")
-                const aHasDash = aStr.includes("-")
-                const bHasUnderscore = bStr.includes("_")
-                const bHasDash = bStr.includes("-")
-
-                if (!aHasUnderscore && !aHasDash) return -1
-                if (!bHasUnderscore && !bHasDash) return 1
-
-                if (aHasUnderscore && !aHasDash) {
-                    const aSuffixMatch = aStr.match(/_(\d+)/)
-                    if (aSuffixMatch) {
-                        if (bHasDash) return -1
-                        if (bHasUnderscore && !bStr.match(/_(\d+)/)) return -1
-                        if (bHasUnderscore) {
-                            const bSuffixMatch = bStr.match(/_(\d+)/)
-                            if (bSuffixMatch) {
-                                return parseInt(aSuffixMatch[1]) - parseInt(bSuffixMatch[1])
-                            }
-                        }
-                    }
-                }
-
-                if (aHasDash) {
-                    if (bHasUnderscore && !bStr.match(/_(\d+)/)) return -1
-                    if (bHasDash) return aStr.localeCompare(bStr)
-                }
-
-                if (aStr.toLowerCase().endsWith("_end")) return 1
-                if (bStr.toLowerCase().endsWith("_end")) return -1
-
-                if (aBase === bBase) {
-                    const aServer = (a as any).server || ""
-                    const bServer = (b as any).server || ""
-                    if (aServer !== bServer) {
-                        return aServer.localeCompare(bServer)
-                    }
-                }
-
-                return aStr.localeCompare(bStr)
-            })
-
-            // Clean up and return
-            deduplicatedEpisodes.forEach(ep => {
-                delete (ep as any).episodeNumberStr
-                ep.number = (ep.number | 0)
-            })
-
-            console.log(`DEBUG: Returning ${deduplicatedEpisodes.length} episodes.`);
-            return deduplicatedEpisodes
-        } catch (error) {
-            console.error("AniMapper findEpisodes error:", error)
-            throw error
+            return allEpisodes;
         }
+
+        // 1. Try Direct Fetch
+        try {
+            const episodes = await fetchEpisodesById(id);
+            if (episodes.length > 0) return this.deduplicateAndSort(episodes);
+        } catch (e) {
+            console.warn("DEBUG: Initial fetch error", e);
+        }
+
+        console.log("DEBUG: Direct fetch failed or returned no episodes. Engaging Search Fallback.");
+
+        // 2. Get Title from Metadata or Anilist to Search
+        let searchTitle = "";
+        try {
+            // Try AniMapper Metadata first
+            const metaId = parseInt(id);
+            if (!isNaN(metaId)) {
+                const metaUrl = `${this.apiBaseUrl}/api/v1/metadata?id=${metaId}`;
+                const metaRes = await fetch(metaUrl, { headers: { "User-Agent": "Seanime" } });
+                if (metaRes.ok) {
+                    const metaData = await metaRes.json() as any;
+                    searchTitle = metaData.result?.titles?.en || metaData.result?.titles?.vi || metaData.result?.titles?.ja;
+                }
+            }
+
+            // If no title, try Anilist GraphQL
+            if (!searchTitle) {
+                console.log("DEBUG: Fetching title from Anilist...");
+                const query = `query ($id: Int) { Media (id: $id, type: ANIME) { title { romaji english native } } }`;
+                const anilistRes = await fetch("https://graphql.anilist.co", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+                    body: JSON.stringify({ query, variables: { id: parseInt(id) } })
+                });
+                if (anilistRes.ok) {
+                    const alData = await anilistRes.json() as any;
+                    searchTitle = alData.data?.Media?.title?.english || alData.data?.Media?.title?.romaji;
+                }
+            }
+        } catch (e) {
+            console.error("DEBUG: Failed to get title for fallback", e);
+        }
+
+        if (!searchTitle) {
+            throw new Error("No episodes found and could not retrieve title for fallback search.");
+        }
+
+        console.log(`DEBUG: Searching fallback for title: ${searchTitle}`);
+
+        // 3. Search and Try Candidates
+        try {
+            const searchResults = await this.search({
+                query: searchTitle,
+                dub: false,
+                media: {
+                    id: parseInt(id) || 0,
+                    synonyms: [],
+                    isAdult: false
+                } as any
+            });
+            console.log(`DEBUG: Found ${searchResults.length} candidates.`);
+
+            for (const candidate of searchResults) {
+                console.log(`DEBUG: Trying candidate ID: ${candidate.id} (${candidate.title})`);
+                try {
+                    // Try fetching with the candidate ID found in search
+                    // Important: The candidate.id from search() is string, but fetchEpisodesById handles string|number
+                    const fallbackEpisodes = await fetchEpisodesById(candidate.id);
+                    if (fallbackEpisodes.length > 0) {
+                        console.log(`DEBUG: Success with candidate ID ${candidate.id}`);
+                        return this.deduplicateAndSort(fallbackEpisodes);
+                    }
+                } catch (e) {
+                    console.warn(`DEBUG: Candidate ${candidate.id} failed`, e);
+                }
+            }
+        } catch (e) {
+            console.error("DEBUG: Search fallback error", e);
+        }
+
+        throw new Error("No episodes found after fallback search.");
+    }
+
+    private deduplicateAndSort(episodes: EpisodeDetails[]): EpisodeDetails[] {
+        const seenEpisodes = new Map<string, EpisodeDetails & { episodeNumberStr?: string; server?: string; mediaId?: number }>()
+        for (const episode of episodes) {
+            const episodeNumberStr = (episode as any).episodeNumberStr || episode.number.toString()
+            if (!seenEpisodes.has(episodeNumberStr)) {
+                seenEpisodes.set(episodeNumberStr, episode)
+            }
+        }
+        const deduplicatedEpisodes = Array.from(seenEpisodes.values())
+
+        deduplicatedEpisodes.sort((a, b) => {
+            const aStr = (a as any).episodeNumberStr || a.number.toString()
+            const bStr = (b as any).episodeNumberStr || b.number.toString()
+            const aBase = parseInt((aStr.match(/^(\d+)/) || ['0', '0'])[1])
+            const bBase = parseInt((bStr.match(/^(\d+)/) || ['0', '0'])[1])
+            if (aBase !== bBase) return aBase - bBase;
+            return aStr.localeCompare(bStr);
+        });
+
+        deduplicatedEpisodes.forEach(ep => {
+            delete (ep as any).episodeNumberStr
+            ep.number = (ep.number | 0)
+        })
+        return deduplicatedEpisodes;
     }
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
