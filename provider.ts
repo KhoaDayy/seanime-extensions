@@ -124,10 +124,13 @@ class Provider {
             const results: SearchResult[] = []
 
             for (const item of data.results) {
-                // Only include items with ANIMEVIETSUB provider
+                // Relaxed check: Include items even if provider is not explicitly listed in search results
+                // This allows us to attempt fetching episodes for them in fallback
+                /*
                 if (item.providers && !item.providers[PROVIDER_NAME]) {
                     continue
                 }
+                */
 
                 const title = item.titles.en || item.titles.vi || item.titles.ja || opts.query
                 results.push({
@@ -146,7 +149,7 @@ class Provider {
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        console.log(`DEBUG: v1.0.9 findEpisodes called for ID: ${id}`);
+        console.log(`DEBUG: v1.1.0 findEpisodes called for ID: ${id}`);
 
         // Helper to fetch episodes by ID
         const fetchEpisodesById = async (targetId: string | number): Promise<EpisodeDetails[]> => {
@@ -169,7 +172,10 @@ class Provider {
                         console.warn(`DEBUG: 404 for ID ${targetId}`);
                         return [];
                     }
-                    throw new Error(`Failed to fetch episodes: ${res.status} ${res.statusText}`);
+                    // If one page fails, we might still have previous episodes, but usually API fails completely.
+                    // We'll log and break.
+                    console.warn(`Failed to fetch episodes page: ${res.status} ${res.statusText}`);
+                    break;
                 }
 
                 const data = await res.json() as AniMapperEpisodesResponse
@@ -181,6 +187,9 @@ class Provider {
                 for (const episode of data.episodes) {
                     const episodeNumberStr = episode.episodeNumber.trim()
                     const baseNumberMatch = episodeNumberStr.match(/^(\d+)/)
+
+                    // Allow episodes without standard numbering if needed, but usually we need a number
+                    // Fallback to 0 if not parsable? No, skip for now.
                     if (!baseNumberMatch) continue;
 
                     const baseNumber = parseInt(baseNumberMatch[1], 10)
@@ -212,19 +221,19 @@ class Provider {
         }
 
         // 1. Try Direct Fetch
+        let directEpisodes: EpisodeDetails[] = [];
         try {
-            const episodes = await fetchEpisodesById(id);
-            if (episodes.length > 0) return this.deduplicateAndSort(episodes);
+            directEpisodes = await fetchEpisodesById(id);
         } catch (e) {
             console.warn("DEBUG: Initial fetch error", e);
         }
 
-        console.log("DEBUG: Direct fetch failed or returned no episodes. Engaging Search Fallback.");
-
-        // 2. Get Title from Metadata or Anilist to Search
+        // 2. Validate Direct Fetch
         let searchTitle = "";
+        let directMappingValid = false;
+
         try {
-            // Try AniMapper Metadata first
+            // Get Metadata to check title vs slug AND to get title for fallback
             const metaId = parseInt(id);
             if (!isNaN(metaId)) {
                 const metaUrl = `${this.apiBaseUrl}/api/v1/metadata?id=${metaId}`;
@@ -232,11 +241,38 @@ class Provider {
                 if (metaRes.ok) {
                     const metaData = await metaRes.json() as any;
                     searchTitle = metaData.result?.titles?.en || metaData.result?.titles?.vi || metaData.result?.titles?.ja;
+
+                    // Validation: Check if the slug matches the season
+                    if (directEpisodes.length > 0 && metaData.result?.providers?.[PROVIDER_NAME]) {
+                        const slug = metaData.result.providers[PROVIDER_NAME].providerMediaId;
+                        if (this.validateSlug(searchTitle, slug)) {
+                            console.log(`DEBUG: Direct mapping validated. Slug: ${slug}, Title: ${searchTitle}`);
+                            directMappingValid = true;
+                        } else {
+                            console.warn(`DEBUG: Direct mapping INVALID. Slug: ${slug} does not match Title: ${searchTitle}`);
+                        }
+                    } else if (directEpisodes.length > 0) {
+                        // No provider metadata but we have episodes? 
+                        // This implies we can't validate. Assume valid or strict?
+                        // Usually metadata should exist. If not, we trust episodes.
+                        console.warn("DEBUG: No provider metadata to validate slug. Assuming valid.");
+                        directMappingValid = true;
+                    }
                 }
             }
+        } catch (e) {
+            console.error("DEBUG: Metadata fetch error", e)
+        }
 
-            // If no title, try Anilist GraphQL
-            if (!searchTitle) {
+        if (directEpisodes.length > 0 && directMappingValid) {
+            return this.deduplicateAndSort(directEpisodes);
+        }
+
+        console.log("DEBUG: Direct fetch failed or invalid. Engaging Search Fallback.");
+
+        // If we still don't have a title (metadata failed), try Anilist
+        if (!searchTitle) {
+            try {
                 console.log("DEBUG: Fetching title from Anilist...");
                 const query = `query ($id: Int) { Media (id: $id, type: ANIME) { title { romaji english native } } }`;
                 const anilistRes = await fetch("https://graphql.anilist.co", {
@@ -248,13 +284,13 @@ class Provider {
                     const alData = await anilistRes.json() as any;
                     searchTitle = alData.data?.Media?.title?.english || alData.data?.Media?.title?.romaji;
                 }
+            } catch (e) {
+                console.error("DEBUG: Failed to get title from Anilist", e);
             }
-        } catch (e) {
-            console.error("DEBUG: Failed to get title for fallback", e);
         }
 
         if (!searchTitle) {
-            throw new Error("No episodes found and could not retrieve title for fallback search.");
+            throw new Error(`No episodes found for ID ${id} and could not retrieve title for fallback search.`);
         }
 
         console.log(`DEBUG: Searching fallback for title: ${searchTitle}`);
@@ -272,13 +308,33 @@ class Provider {
             });
             console.log(`DEBUG: Found ${searchResults.length} candidates.`);
 
-            for (const candidate of searchResults) {
-                console.log(`DEBUG: Trying candidate ID: ${candidate.id} (${candidate.title})`);
+            // Sort candidates by similarity to the search title
+            const sortedCandidates = searchResults.map(c => ({
+                candidate: c,
+                similarity: this.getSimilarity(searchTitle, c.title)
+            })).sort((a, b) => b.similarity - a.similarity);
+
+            for (const { candidate, similarity } of sortedCandidates) {
+                console.log(`DEBUG: Trying candidate ID: ${candidate.id} (${candidate.title}) - Similarity: ${similarity.toFixed(2)}`);
+
+                // Avoid infinite loop if candidate is same as original ID and it was invalid
+                if (candidate.id === id && !directMappingValid) {
+                    console.log("DEBUG: Skipping original ID in fallback as it was determined invalid.");
+                    continue;
+                }
+
+                // Skip if similarity is too low (e.g. less than 0.6)
+                // Adjust this threshold as needed based on user feedback
+                if (similarity < 0.6) {
+                    console.log(`DEBUG: Skipping candidate ${candidate.title} due to low similarity.`);
+                    continue;
+                }
+
                 try {
-                    // Try fetching with the candidate ID found in search
-                    // Important: The candidate.id from search() is string, but fetchEpisodesById handles string|number
                     const fallbackEpisodes = await fetchEpisodesById(candidate.id);
                     if (fallbackEpisodes.length > 0) {
+                        // Optionally validate these too? 
+                        // For now we assume search results are fresh better candidates.
                         console.log(`DEBUG: Success with candidate ID ${candidate.id}`);
                         return this.deduplicateAndSort(fallbackEpisodes);
                     }
@@ -290,7 +346,55 @@ class Provider {
             console.error("DEBUG: Search fallback error", e);
         }
 
-        throw new Error("No episodes found after fallback search.");
+        // If we had direct episodes but they were invalid, and fallback failed...
+        // Should we return the invalid ones as a last resort?
+        // No, user specifically said "wrong season". Better to return nothing or error.
+        throw new Error(`No episodes found for media ID: ${id} (Validated Fallback)`);
+    }
+
+    private validateSlug(title: string, slug: string): boolean {
+        if (!title || !slug) return true;
+
+        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const t = normalize(title);
+        const s = normalize(slug);
+
+        // Check for specific season markers
+        const seasonRegex = /(?:season|s|phan)(\d+)/i;
+
+        const titleMatch = title.match(seasonRegex);
+        const slugMatch = slug.match(seasonRegex);
+
+        if (titleMatch && slugMatch) {
+            // Both have season numbers, they MUST match
+            if (titleMatch[1] !== slugMatch[1]) {
+                return false;
+            }
+        } else if (titleMatch && !slugMatch) {
+            // Title has season (e.g. "Season 3") but slug has no season info.
+            // This is suspicious if the slug is just "slug-name" (usually implies S1).
+            // But sometimes S3 slug is just "name".
+            // However, usually providers append season.
+            // Let's check if title is "Season 1"
+            if (titleMatch[1] !== "1") {
+                // Title is S2+, slug has no number.
+                // Often "slug" = S1. "slug-2" = S2.
+                // So if title is S3 and slug has no number -> likely S1Mismatch.
+                // Mismatch!
+                return false;
+            }
+        } else if (!titleMatch && slugMatch) {
+            // Title has no season (implies S1), Slug has Season (e.g. s2).
+            // Mismatch!
+            if (slugMatch[1] !== "1") {
+                return false;
+            }
+        }
+
+        // Advanced: Check for "Part X" or "Cour X" if needed.
+        // For now season number is the main culprit.
+
+        return true;
     }
 
     private deduplicateAndSort(episodes: EpisodeDetails[]): EpisodeDetails[] {
@@ -374,5 +478,39 @@ class Provider {
             console.error("AniMapper findEpisodeServer error:", error)
             throw error
         }
+    }
+
+    private getSimilarity(s1: string, s2: string): number {
+        const longer = s1.length > s2.length ? s1 : s2;
+        const shorter = s1.length > s2.length ? s2 : s1;
+        if (longer.length === 0) {
+            return 1.0;
+        }
+        return (longer.length - this.editDistance(longer, shorter)) / parseFloat(longer.length.toString());
+    }
+
+    private editDistance(s1: string, s2: string): number {
+        s1 = s1.toLowerCase();
+        s2 = s2.toLowerCase();
+        const costs = new Array();
+        for (let i = 0; i <= s1.length; i++) {
+            let lastValue = i;
+            for (let j = 0; j <= s2.length; j++) {
+                if (i == 0)
+                    costs[j] = j;
+                else {
+                    if (j > 0) {
+                        let newValue = costs[j - 1];
+                        if (s1.charAt(i - 1) != s2.charAt(j - 1))
+                            newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                        costs[j - 1] = lastValue;
+                        lastValue = newValue;
+                    }
+                }
+            }
+            if (i > 0)
+                costs[s2.length] = lastValue;
+        }
+        return costs[s2.length];
     }
 }
