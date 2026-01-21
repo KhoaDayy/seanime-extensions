@@ -138,6 +138,7 @@ class Provider {
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
+        console.log("DEBUG: v1.0.2 findEpisodes called for ID:", id);
         try {
             const mediaId = parseInt(id)
             if (isNaN(mediaId)) {
@@ -145,26 +146,32 @@ class Provider {
             }
 
             let offset = 0
-            const limit = 100
+            const limit = 20 // Reduce limit for stability
             const allEpisodes: EpisodeDetails[] = []
 
             // Pagination loop
             while (true) {
                 const episodesUrl = `${this.apiBaseUrl}/api/v1/stream/episodes?id=${mediaId}&provider=${PROVIDER_NAME}&limit=${limit}&offset=${offset}`
-                const res = await fetch(episodesUrl)
+                const res = await fetch(episodesUrl, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                    }
+                })
 
                 if (!res.ok) {
                     if (res.status === 404) {
+                        let errorData: any = {};
                         try {
-                            const errorData = await res.json() as any
-                            if (errorData.code === "MAPPING_NOT_FOUND" || errorData.code === "EPISODES_NOT_FOUND") {
-                                throw new Error(`No episodes found for media ID: ${mediaId}`)
-                            }
+                            errorData = await res.json();
                         } catch (e) {
-                            // Ignore json parse error
+                            // parse error, ignore
+                        }
+
+                        if (errorData && (errorData.code === "MAPPING_NOT_FOUND" || errorData.code === "EPISODES_NOT_FOUND")) {
+                            throw new Error(`No episodes found for media ID: ${mediaId}`);
                         }
                     }
-                    throw new Error(`Failed to fetch episodes: ${res.status} ${res.statusText}`)
+                    throw new Error(`Failed to fetch episodes: ${res.status} ${res.statusText}`);
                 }
 
                 const data = await res.json() as AniMapperEpisodesResponse

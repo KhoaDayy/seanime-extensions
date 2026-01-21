@@ -3,7 +3,7 @@
     "name": "AniMapper AnimeVietSub",
     "description": "AnimeVietSub provider using AniMapper API for streaming anime with Vietnamese subtitles",
     "manifestURI": "https://raw.githubusercontent.com/KhoaDayy/seanime-extensions/main/metadata.json",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "author": "Hasukatsu",
     "type": "onlinestream-provider",
     "language": "typescript",
