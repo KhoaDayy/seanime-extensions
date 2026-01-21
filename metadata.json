@@ -3,11 +3,11 @@
     "name": "AniMapper AnimeVietSub",
     "description": "AnimeVietSub provider using AniMapper API for streaming anime with Vietnamese subtitles",
     "manifestURI": "",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "author": "Hasukatsu",
     "type": "onlinestream-provider",
     "language": "typescript",
     "lang": "vi",
     "payload": "",
-    "payloadURI": ""
+    "payloadURI": "file:///c:/Users/AD/Documents/Code/seanime-extensions/provider.ts"
 }
