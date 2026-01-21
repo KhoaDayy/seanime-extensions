@@ -76,7 +76,11 @@ class Provider {
             // Priority check: If media ID is available, check metadata first
             if (opts.media?.id) {
                 const metadataUrl = `${this.apiBaseUrl}/api/v1/metadata?id=${opts.media.id}`
-                const metadataRes = await fetch(metadataUrl)
+                const metadataRes = await fetch(metadataUrl, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                    }
+                })
 
                 if (metadataRes.ok) {
                     const metadata = await metadataRes.json() as {
@@ -100,7 +104,11 @@ class Provider {
 
             // Fallback to search API
             const searchUrl = `${this.apiBaseUrl}/api/v1/search?title=${encodeURIComponent(opts.query)}&mediaType=ANIME&limit=20&offset=0`
-            const res = await fetch(searchUrl)
+            const res = await fetch(searchUrl, {
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                }
+            })
 
             if (!res.ok) {
                 console.error(`AniMapper search failed: ${res.status} ${res.statusText}`)
@@ -138,20 +146,42 @@ class Provider {
     }
 
     async findEpisodes(id: string): Promise<EpisodeDetails[]> {
-        console.log("DEBUG: v1.0.2 findEpisodes called for ID:", id);
+        console.log(`DEBUG: v1.0.4 findEpisodes called for ID: ${id}`);
         try {
             const mediaId = parseInt(id)
             if (isNaN(mediaId)) {
                 throw new Error(`Invalid media ID: ${id}`)
             }
 
+            // 1. Metadata check for debugging
+            try {
+                const metaUrl = `${this.apiBaseUrl}/api/v1/metadata?id=${mediaId}`;
+                const metaRes = await fetch(metaUrl, {
+                    headers: { "User-Agent": "Mozilla/5.0 Seanime" }
+                });
+                if (metaRes.ok) {
+                    const metaData = await metaRes.json() as any;
+                    // Check if provider exists in metadata
+                    if (metaData?.result?.providers?.[PROVIDER_NAME]) {
+                        console.log(`DEBUG: Metadata confirms ${PROVIDER_NAME} exists for ID ${mediaId}`);
+                    } else {
+                        console.warn(`DEBUG: Metadata implies ${PROVIDER_NAME} MISSING for ID ${mediaId}`);
+                    }
+                }
+            } catch (e) {
+                console.error("DEBUG: Failed to check metadata", e);
+            }
+
             let offset = 0
-            const limit = 20 // Reduce limit for stability
+            const limit = 20
             const allEpisodes: EpisodeDetails[] = []
+            let hasNextPage = true;
 
             // Pagination loop
-            while (true) {
+            while (hasNextPage) {
                 const episodesUrl = `${this.apiBaseUrl}/api/v1/stream/episodes?id=${mediaId}&provider=${PROVIDER_NAME}&limit=${limit}&offset=${offset}`
+                console.log(`DEBUG: Fetching URL: ${episodesUrl}`);
+
                 const res = await fetch(episodesUrl, {
                     headers: {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -159,13 +189,14 @@ class Provider {
                 })
 
                 if (!res.ok) {
+                    console.error(`DEBUG: HTTP Error ${res.status} for ${episodesUrl}`);
+
                     if (res.status === 404) {
                         let errorData: any = {};
                         try {
                             errorData = await res.json();
-                        } catch (e) {
-                            // parse error, ignore
-                        }
+                            console.error("DEBUG: 404 Response:", JSON.stringify(errorData));
+                        } catch (e) { }
 
                         if (errorData && (errorData.code === "MAPPING_NOT_FOUND" || errorData.code === "EPISODES_NOT_FOUND")) {
                             throw new Error(`No episodes found for media ID: ${mediaId}`);
@@ -177,8 +208,11 @@ class Provider {
                 const data = await res.json() as AniMapperEpisodesResponse
 
                 if (!data.episodes || data.episodes.length === 0) {
-                    break
+                    console.log("DEBUG: No episodes returned in current page. Stopping loop.");
+                    break;
                 }
+
+                console.log(`DEBUG: Received ${data.episodes.length} episodes on offset ${offset}`);
 
                 // Process episodes
                 for (const episode of data.episodes) {
@@ -224,13 +258,14 @@ class Provider {
                 }
 
                 if (!data.hasNextPage) {
-                    break
+                    hasNextPage = false;
+                } else {
+                    offset += limit
                 }
-
-                offset += limit
             }
 
             if (allEpisodes.length === 0) {
+                console.error("DEBUG: allEpisodes list is empty.");
                 throw new Error("No episodes found.")
             }
 
@@ -313,6 +348,7 @@ class Provider {
                 ep.number = (ep.number | 0)
             })
 
+            console.log(`DEBUG: Returning ${deduplicatedEpisodes.length} episodes.`);
             return deduplicatedEpisodes
         } catch (error) {
             console.error("AniMapper findEpisodes error:", error)
@@ -328,7 +364,11 @@ class Provider {
             const episodeData = episode.id
 
             const sourceUrl = `${this.apiBaseUrl}/api/v1/stream/source?episodeData=${encodeURIComponent(episodeData)}&provider=${PROVIDER_NAME}`
-            const res = await fetch(sourceUrl)
+            const res = await fetch(sourceUrl, {
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                }
+            })
 
             if (!res.ok) {
                 throw new Error(`Failed to fetch episode source: ${res.status} ${res.statusText}`)
