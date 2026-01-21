@@ -1,5 +1,3 @@
-// Core API types for Seanime extensions
-
 declare function fetch(url: string, options?: {
     method?: string
     headers?: { [key: string]: string }
@@ -7,12 +5,11 @@ declare function fetch(url: string, options?: {
 }): Promise<{
     ok: boolean
     status: number
+    statusText: string
     text(): Promise<string>
     json(): Promise<any>
     url: string
 }>
-
-declare function LoadDoc(html: string): any
 
 declare const console: {
     log(...args: any[]): void
@@ -20,5 +17,3 @@ declare const console: {
     warn(...args: any[]): void
     info(...args: any[]): void
 }
-
-declare function $sleep(ms: number): Promise<void>

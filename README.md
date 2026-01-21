@@ -72,6 +72,7 @@ Extension tối ưu cho:
 
 ### Technical Details
 
+- **Language**: TypeScript (Exact match with SinonCute implementation)
 - **Pagination**: Tự động load tất cả episodes (100/page)
 - **Deduplication**: Loại bỏ episodes duplicate dựa trên episode number
 - **Sorting**: Smart sorting hỗ trợ special episodes (195_1, 195-196-197, etc.)
