@@ -80,17 +80,23 @@ class Provider {
             if (opts.media?.id) {
                 const metadataUrl = `${this.apiBaseUrl}/api/v1/metadata?id=${opts.media.id}`
                 const metadataRes = await fetch(metadataUrl)
-                
+
                 if (metadataRes.ok) {
-                    const metadata = await metadataRes.json() as { 
+                    const metadata = await metadataRes.json() as {
                         success: boolean
-                        result?: { 
+                        result?: {
                             providers?: { [key: string]: any }
                             titles?: { en?: string; vi?: string; ja?: string }
-                        } 
+                        }
                     }
                     if (metadata.success && metadata.result?.providers?.[PROVIDER_NAME]) {
-                        const title = metadata.result.titles?.en || metadata.result.titles?.vi || metadata.result.titles?.ja || opts.media.englishTitle || opts.media.romajiTitle || opts.query
+                        const title =
+                            metadata.result.titles?.en ||
+                            metadata.result.titles?.vi ||
+                            metadata.result.titles?.ja ||
+                            opts.media.englishTitle ||
+                            opts.media.romajiTitle ||
+                            opts.query
                         return [{
                             id: opts.media.id.toString(),
                             title: title,
@@ -119,7 +125,7 @@ class Provider {
 
             for (const item of data.results) {
                 if (item.providers && !item.providers[PROVIDER_NAME]) {
-                    continue 
+                    continue
                 }
 
                 const title = item.titles.en || item.titles.vi || item.titles.ja || opts.query
@@ -168,43 +174,41 @@ class Provider {
                 if (!data.episodes || data.episodes.length === 0) {
                     break
                 }
-                
+
                 for (const episode of data.episodes) {
-                    const episodeNumberStr = episode.episodeNumber.trim()
-                    
+                    const episodeNumberStr = (episode.episodeNumber ?? "").trim()
+
+                    // Support non-number episode labels (e.g., "Xem Full") by defaulting to 1
                     const baseNumberMatch = episodeNumberStr.match(/^(\d+)/)
-                    if (!baseNumberMatch) {
-                        continue
+
+                    let episodeNumberInt = 1
+                    let title = episodeNumberStr || "Episode 1"
+
+                    if (baseNumberMatch) {
+                        const baseNumber = parseInt(baseNumberMatch[1], 10)
+                        episodeNumberInt = (baseNumber | 0)
+
+                        const hasUnderscoreSuffix = episodeNumberStr.includes("_")
+                        const hasDashRange = episodeNumberStr.includes("-") && episodeNumberStr.split("-").length > 1
+
+                        title = (hasUnderscoreSuffix || hasDashRange)
+                            ? `Episode ${episodeNumberStr}`
+                            : `Episode ${episodeNumberInt}`
                     }
-                    
-                    const baseNumber = parseInt(baseNumberMatch[1], 10)
-                    if (isNaN(baseNumber)) {
-                        continue
-                    }
-                    
-                    const hasUnderscoreSuffix = episodeNumberStr.includes("_")
-                    const hasDashRange = episodeNumberStr.includes("-") && episodeNumberStr.split("-").length > 1
-                    
-                    const episodeNumber = baseNumber
-                    
-                    const title = (hasUnderscoreSuffix || hasDashRange)
-                        ? `Episode ${episodeNumberStr}` 
-                        : `Episode ${episodeNumber}`
-                    
-                    // Ensure number is always an integer - use bitwise OR to force integer conversion
-                    const episodeNumberInt = (parseInt(baseNumber.toString(), 10)) | 0
-                    
+
                     const episodeDetail: EpisodeDetails & { episodeNumberStr?: string; server?: string; mediaId?: number } = {
                         id: episode.episodeId,
                         number: episodeNumberInt,
                         url: "",
                         title: title,
                     }
-                    episodeDetail.episodeNumberStr = episodeNumberStr
+
+                    episodeDetail.episodeNumberStr = episodeNumberStr || episodeNumberInt.toString()
                     episodeDetail.mediaId = mediaId
                     if (episode.server) {
                         episodeDetail.server = episode.server
                     }
+
                     allEpisodes.push(episodeDetail)
                 }
 
@@ -221,16 +225,16 @@ class Provider {
 
             // Remove duplicates: if same episode number exists, keep only one
             const seenEpisodes = new Map<string, EpisodeDetails & { episodeNumberStr?: string; server?: string; mediaId?: number }>()
-            
+
             for (const episode of allEpisodes) {
                 const episodeNumberStr = (episode as any).episodeNumberStr || episode.number.toString()
-                
+
                 // Use episodeNumberStr as the key for deduplication
                 if (!seenEpisodes.has(episodeNumberStr)) {
                     seenEpisodes.set(episodeNumberStr, episode)
                 }
             }
-            
+
             const deduplicatedEpisodes = Array.from(seenEpisodes.values())
 
             // Sort episodes by parsing the episode number string
@@ -238,29 +242,29 @@ class Provider {
             deduplicatedEpisodes.sort((a, b) => {
                 const aStr = (a as any).episodeNumberStr || a.number.toString()
                 const bStr = (b as any).episodeNumberStr || b.number.toString()
-                
+
                 const aBaseMatch = aStr.match(/^(\d+)/)
                 const bBaseMatch = bStr.match(/^(\d+)/)
-                
+
                 if (!aBaseMatch || !bBaseMatch) {
                     return aStr.localeCompare(bStr)
                 }
-                
-                const aBase = parseInt(aBaseMatch[1])
-                const bBase = parseInt(bBaseMatch[1])
-                
+
+                const aBase = parseInt(aBaseMatch[1], 10)
+                const bBase = parseInt(bBaseMatch[1], 10)
+
                 if (aBase !== bBase) {
                     return aBase - bBase
                 }
-                
+
                 const aHasUnderscore = aStr.includes("_")
                 const aHasDash = aStr.includes("-")
                 const bHasUnderscore = bStr.includes("_")
                 const bHasDash = bStr.includes("-")
-                
+
                 if (!aHasUnderscore && !aHasDash) return -1
                 if (!bHasUnderscore && !bHasDash) return 1
-                
+
                 if (aHasUnderscore && !aHasDash) {
                     const aSuffixMatch = aStr.match(/_(\d+)/)
                     if (aSuffixMatch) {
@@ -269,20 +273,20 @@ class Provider {
                         if (bHasUnderscore) {
                             const bSuffixMatch = bStr.match(/_(\d+)/)
                             if (bSuffixMatch) {
-                                return parseInt(aSuffixMatch[1]) - parseInt(bSuffixMatch[1])
+                                return parseInt(aSuffixMatch[1], 10) - parseInt(bSuffixMatch[1], 10)
                             }
                         }
                     }
                 }
-                
+
                 if (aHasDash) {
                     if (bHasUnderscore && !bStr.match(/_(\d+)/)) return -1
                     if (bHasDash) return aStr.localeCompare(bStr)
                 }
-                
+
                 if (aStr.toLowerCase().endsWith("_end")) return 1
                 if (bStr.toLowerCase().endsWith("_end")) return -1
-                
+
                 if (aBase === bBase) {
                     const aServer = (a as any).server || ""
                     const bServer = (b as any).server || ""
@@ -290,10 +294,10 @@ class Provider {
                         return aServer.localeCompare(bServer)
                     }
                 }
-                
+
                 return aStr.localeCompare(bStr)
             })
-            
+
             deduplicatedEpisodes.forEach(ep => {
                 delete (ep as any).episodeNumberStr
                 ep.number = (ep.number | 0)
@@ -308,11 +312,9 @@ class Provider {
 
     async findEpisodeServer(episode: EpisodeDetails, server: string): Promise<EpisodeServer> {
         try {
-            const mediaId = (episode as any).mediaId
-            
             const episodeServer = (episode as any).server
-            let serverName = server && server !== "default" ? server : (episodeServer || "AnimeVsub")
-            
+            const serverName = server && server !== "default" ? server : (episodeServer || "AnimeVsub")
+
             const episodeData = episode.id
 
             const sourceUrl = `${this.apiBaseUrl}/api/v1/stream/source?episodeData=${encodeURIComponent(episodeData)}&provider=${PROVIDER_NAME}`
@@ -328,7 +330,6 @@ class Provider {
             if (data.type === "HLS" || data.url.includes(".m3u8") || data.url.includes("/m3u8/")) {
                 videoType = "m3u8"
             } else if (data.type === "EMBED") {
-                // Not support
                 videoType = "unknown"
             } else if (data.url.includes(".mp4")) {
                 videoType = "mp4"
@@ -346,7 +347,7 @@ class Provider {
 
             const result: EpisodeServer = {
                 server: serverName,
-                headers: headers,
+                headers,
                 videoSources: [{
                     url: finalUrl,
                     type: videoType,
