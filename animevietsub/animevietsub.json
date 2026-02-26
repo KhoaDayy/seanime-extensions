@@ -1,0 +1,13 @@
+{
+  "id": "animevietsub",
+  "name": "AnimeVietSub",
+  "description": "AnimeVietSub provider using Hasukatsu API for streaming anime with Vietnamese subtitles",
+  "manifestURI": "https://raw.githubusercontent.com/KhoaDayy/seanime-extensions/main/animevietsub/animevietsub.json",
+  "version": "1.0.0",
+  "author": "Hasukatsu",
+  "type": "onlinestream-provider",
+  "language": "typescript",
+  "lang": "vi",
+  "payload": "",
+  "payloadURI": "https://raw.githubusercontent.com/KhoaDayy/seanime-extensions/main/animevietsub/provider.ts"
+}

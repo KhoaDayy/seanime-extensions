@@ -1,12 +1,10 @@
 /// <reference path="./onlinestream-provider.d.ts" />
 /// <reference path="./core.d.ts" />
 
-// AniMapper API base URL - can be configured
-const API_BASE_URL = "https://api.animapper.net"
+const API_BASE_URL = "https://api.hasukatsu.site"
 const PROVIDER_NAME = "ANIMEVIETSUB"
 
-// AniMapper API response types
-type AniMapperSearchResponse = {
+type HasukatsuSearchResponse = {
     success: boolean
     results: Array<{
         id: number
@@ -22,13 +20,6 @@ type AniMapperSearchResponse = {
             coverMd?: string
         }
         status?: string
-        providers?: {
-            [key: string]: {
-                providerMediaId: string
-                similarity: number
-                mappingType: string
-            }
-        }
     }>
     total: number
     limit: number
@@ -36,12 +27,7 @@ type AniMapperSearchResponse = {
     hasNextPage: boolean
 }
 
-type AniMapperServersResponse = {
-    provider: string
-    servers: string[]
-}
-
-type AniMapperEpisodesResponse = {
+type HasukatsuEpisodesResponse = {
     provider: string
     limit: number
     offset: number
@@ -54,7 +40,7 @@ type AniMapperEpisodesResponse = {
     }>
 }
 
-type AniMapperSourceResponse = {
+type HasukatsuSourceResponse = {
     server: string
     type: string
     corsProxyRequired: boolean
@@ -78,44 +64,28 @@ class Provider {
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         try {
             if (opts.media?.id) {
-                const metadataUrl = `${this.apiBaseUrl}/api/v1/metadata?id=${opts.media.id}`
-                const metadataRes = await fetch(metadataUrl)
-
-                if (metadataRes.ok) {
-                    const metadata = await metadataRes.json() as {
-                        success: boolean
-                        result?: {
-                            providers?: { [key: string]: any }
-                            titles?: { en?: string; vi?: string; ja?: string }
-                        }
-                    }
-                    if (metadata.success && metadata.result?.providers?.[PROVIDER_NAME]) {
-                        const title =
-                            metadata.result.titles?.en ||
-                            metadata.result.titles?.vi ||
-                            metadata.result.titles?.ja ||
-                            opts.media.englishTitle ||
-                            opts.media.romajiTitle ||
-                            opts.query
-                        return [{
-                            id: opts.media.id.toString(),
-                            title: title,
-                            url: "",
-                            subOrDub: "sub",
-                        }]
-                    }
-                }
+                // If it's a direct ID lookup, we don't need metadata because Hasukatsu already uses AniList ID directly!
+                const title =
+                    opts.media.englishTitle ||
+                    opts.media.romajiTitle ||
+                    opts.query
+                return [{
+                    id: opts.media.id.toString(),
+                    title: title,
+                    url: "",
+                    subOrDub: "sub",
+                }]
             }
 
-            const searchUrl = `${this.apiBaseUrl}/api/v1/search?title=${encodeURIComponent(opts.query)}&mediaType=ANIME&limit=20&offset=0`
+            const searchUrl = `${this.apiBaseUrl}/search?title=${encodeURIComponent(opts.query)}&limit=20`
             const res = await fetch(searchUrl)
 
             if (!res.ok) {
-                console.error(`AniMapper search failed: ${res.status} ${res.statusText}`)
+                console.error(`Hasukatsu search failed: ${res.status} ${res.statusText}`)
                 return []
             }
 
-            const data = await res.json() as AniMapperSearchResponse
+            const data = await res.json() as HasukatsuSearchResponse
 
             if (!data.success || !data.results) {
                 return []
@@ -124,10 +94,6 @@ class Provider {
             const results: SearchResult[] = []
 
             for (const item of data.results) {
-                if (item.providers && !item.providers[PROVIDER_NAME]) {
-                    continue
-                }
-
                 const title = item.titles.en || item.titles.vi || item.titles.ja || opts.query
                 results.push({
                     id: item.id.toString(),
@@ -139,7 +105,7 @@ class Provider {
 
             return results
         } catch (error) {
-            console.error("AniMapper search error:", error)
+            console.error("Hasukatsu search error:", error)
             return []
         }
     }
@@ -156,7 +122,7 @@ class Provider {
             const allEpisodes: EpisodeDetails[] = []
 
             while (true) {
-                const episodesUrl = `${this.apiBaseUrl}/api/v1/stream/episodes?id=${mediaId}&provider=${PROVIDER_NAME}&limit=${limit}&offset=${offset}`
+                const episodesUrl = `${this.apiBaseUrl}/stream/episodes?id=${mediaId}&provider=${PROVIDER_NAME}&limit=${limit}&offset=${offset}`
                 const res = await fetch(episodesUrl)
 
                 if (!res.ok) {
@@ -169,7 +135,7 @@ class Provider {
                     throw new Error(`Failed to fetch episodes: ${res.status} ${res.statusText}`)
                 }
 
-                const data = await res.json() as AniMapperEpisodesResponse
+                const data = await res.json() as HasukatsuEpisodesResponse
 
                 if (!data.episodes || data.episodes.length === 0) {
                     break
@@ -178,7 +144,6 @@ class Provider {
                 for (const episode of data.episodes) {
                     const episodeNumberStr = (episode.episodeNumber ?? "").trim()
 
-                    // Support non-number episode labels (e.g., "Xem Full") by defaulting to 1
                     const baseNumberMatch = episodeNumberStr.match(/^(\d+)/)
 
                     let episodeNumberInt = 1
@@ -228,8 +193,6 @@ class Provider {
 
             for (const episode of allEpisodes) {
                 const episodeNumberStr = (episode as any).episodeNumberStr || episode.number.toString()
-
-                // Use episodeNumberStr as the key for deduplication
                 if (!seenEpisodes.has(episodeNumberStr)) {
                     seenEpisodes.set(episodeNumberStr, episode)
                 }
@@ -238,7 +201,6 @@ class Provider {
             const deduplicatedEpisodes = Array.from(seenEpisodes.values())
 
             // Sort episodes by parsing the episode number string
-            // This handles formats like "195", "195_1", "195_2", "195-196-197", "195_end"
             deduplicatedEpisodes.sort((a, b) => {
                 const aStr = (a as any).episodeNumberStr || a.number.toString()
                 const bStr = (b as any).episodeNumberStr || b.number.toString()
@@ -305,7 +267,7 @@ class Provider {
 
             return deduplicatedEpisodes
         } catch (error) {
-            console.error("AniMapper findEpisodes error:", error)
+            console.error("Hasukatsu findEpisodes error:", error)
             throw error
         }
     }
@@ -317,14 +279,14 @@ class Provider {
 
             const episodeData = episode.id
 
-            const sourceUrl = `${this.apiBaseUrl}/api/v1/stream/source?episodeData=${encodeURIComponent(episodeData)}&provider=${PROVIDER_NAME}`
+            const sourceUrl = `${this.apiBaseUrl}/stream/source?episodeData=${encodeURIComponent(episodeData)}&server=${encodeURIComponent(serverName)}`
             const res = await fetch(sourceUrl)
 
             if (!res.ok) {
                 throw new Error(`Failed to fetch episode source: ${res.status} ${res.statusText}`)
             }
 
-            const data = await res.json() as AniMapperSourceResponse
+            const data = await res.json() as HasukatsuSourceResponse
 
             let videoType: VideoSourceType = "unknown"
             if (data.type === "HLS" || data.url.includes(".m3u8") || data.url.includes("/m3u8/")) {
@@ -358,7 +320,7 @@ class Provider {
 
             return result
         } catch (error) {
-            console.error("AniMapper findEpisodeServer error:", error)
+            console.error("Hasukatsu findEpisodeServer error:", error)
             throw error
         }
     }
